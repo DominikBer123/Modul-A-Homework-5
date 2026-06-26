@@ -2,40 +2,83 @@ clear
 close all
 clc
 
-% getting all the data needed for refY
+% reset System
+
+pendulum_process_obf([], 0); 
+
+
 Ts = 0.05;              % Čas vzorčenja (s)
 T_sim = 10;             % Skupni čas simulacije (s)
 N = ceil(T_sim / Ts);   % Število korakov
 t_vec = (0:N-1)' * Ts;  % Časovni vektor
 
+% Sine wave parameters for bounds [8, 20]
+bias = 50; 
+amplitude = 30; 
+f = 1;                  % Frequency in Hz (adjust as needed)
 
-TimeOfPeriod = 1.5;       % Period of alternation (seconds)
-uBaseValue = 1.5;         % Baseline value
-amplitude = 0.5;        % How much it steps up/down from baseline
+% Generate the sine wave
+refYDeg = bias + amplitude * sin(2 * pi * f * t_vec);
 
-u_vec = zeros(N,1);
-numSteps = ceil(t_vec(end) / TimeOfPeriod);
 
-for k = 1:numSteps
 
-    idx = (t_vec >= (k-1)*TimeOfPeriod) & (t_vec < k*TimeOfPeriod);
+figure
+plot(t_vec,refYDeg)
 
-    stepNoise = (2*rand - 1) * amplitude;
 
-    u_vec(idx) = uBaseValue + stepNoise;
+%% Random Staircase Reference
 
+Ts = 0.05;
+T_sim = 100;
+N = ceil(T_sim/Ts);
+t_vec = (0:N-1)'*Ts;
+
+% Limits (degrees)
+minAngle = 30;
+maxAngle = 60;
+
+% Step duration limits (seconds)
+minHold = 1.0;
+maxHold = 3.0;
+
+refYDeg = zeros(N,1);
+
+k = 1;
+while k <= N
+
+    % Random angle
+    level = minAngle + (maxAngle-minAngle)*rand();
+
+    % Random duration
+    holdTime = minHold + (maxHold-minHold)*rand();
+    holdSamples = round(holdTime/Ts);
+
+    idx = k:min(k+holdSamples-1,N);
+    refYDeg(idx) = level;
+
+    k = idx(end)+1;
 end
 
+% Convert to radians
+refY = deg2rad(refYDeg);
 
-pendulum_process_obf([], 0); 
+% Plot
+figure
+stairs(t_vec,refYDeg,'LineWidth',1.5)
+grid on
+xlabel('Time [s]')
+ylabel('Reference [deg]')
+title('Random Staircase Reference')
 
+
+
+
+
+refY = deg2rad(refYDeg);
 
 
 
 %% začetek lab vaje 5
-
-refY = y_vec;
-
 fuzziness =2;
 
 theta_local = [
@@ -63,14 +106,11 @@ state.numRules    = 5;   % your number of clusters/rules
 
 %% Main Receding Horizon Control Loop
 
-% 1. Fix the rule count configuration
-state.numRules = 5;   
+% 2. MPC Horizon Configurations
 
-% 2. MPC Horizon Configurations
-% 2. MPC Horizon Configurations
-H = 6;                        % Prediction Horizon (6 samples ahead)
 S = 1;                        % Control Horizon (1 decision parameter)
-segLengths = 6;               % A single segment of length 6 (sums to H)
+segLengths = 8;               % A single segment of length 6 (sums to H)
+H = sum(segLengths);
 cfg.lamDu = 0.5;
 
 % Actuator saturation limits (Adjust these to match your actual pendulum bounds)
@@ -82,13 +122,13 @@ u_cl = zeros(N, 1);         % Closed-loop control history
 y_cl = zeros(N, 1);         % Closed-loop system output history
 
 % Initialize the system with the first couple of true measurements to kickstart NARX lag
-y_cl(1) = refY(1);
-y_cl(2) = refY(2);
-u_cl(1) = uBaseValue;
-u_cl(2) = uBaseValue;
+y_cl(1) = 0.9100;
+y_cl(2) = 0.7700;
+u_cl(1) = 0;
+u_cl(2) = 0;
 
 % Warm-start initialization for the optimizer vector p (size S x 1)
-pWarm = ones(S, 1) * uBaseValue;
+pWarm = zeros(S, 1);
 
 disp('Starting MPC Closed-Loop Simulation...');
 
@@ -120,13 +160,9 @@ for k = 3:N
     % Update your warm start guess for the next iteration (time step k+1)
     pWarm = pOpt; 
     
-    % --- Apply input to the plant ---
-    % We pass the entire past control history up to step k into your function.
-    % We assume your plant function extracts what it needs or simulates step-by-step.
-    % If pendulum_process_obf acts as a full-simulation, you may need to pass historical 
-    % windows depending on how its internal differential solver handles single updates.
-    y_full = pendulum_process_obf(u_cl(1:k), Ts);
-    y_cl(k) = y_full(end); % Extract the current true system state
+    %Calculates the next value from the system
+    y_new = pendulum_process_obf(u_cl(k), Ts);
+    y_cl(k) = y_new(1,1); % Extract the current true system state
     
     % Simple progress tracker
     if mod(k, 200) == 0
@@ -135,7 +171,41 @@ for k = 3:N
 end
 
 disp('Simulation finished! Plotting results...');
+%% Plot MPC Results
 
+figure('Name','MPC Closed Loop Results','NumberTitle','off');
+
+%----------------------------------------------------------
+% Output Tracking
+%----------------------------------------------------------
+subplot(3,1,1)
+plot(t_vec, rad2deg(refY),'r--','LineWidth',1.5); hold on;
+plot(t_vec, rad2deg(y_cl),'b','LineWidth',1.5);
+grid on;
+xlabel('Time [s]')
+ylabel('Angle [deg]')
+title('Reference Tracking')
+legend('Reference','Pendulum Output','Location','best')
+
+%----------------------------------------------------------
+% Control Input
+%----------------------------------------------------------
+subplot(3,1,2)
+stairs(t_vec,u_cl,'k','LineWidth',1.5)
+grid on
+xlabel('Time [s]')
+ylabel('Control Input')
+title('MPC Control Signal')
+
+%----------------------------------------------------------
+% Tracking Error
+%----------------------------------------------------------
+subplot(3,1,3)
+plot(t_vec,rad2deg(refY - y_cl),'m','LineWidth',1.5)
+grid on
+xlabel('Time [s]')
+ylabel('Error [deg]')
+title('Tracking Error')
 %% 5. Plot the tracking performance
 figure;
 subplot(2,1,1);
@@ -234,9 +304,21 @@ function J = mpc_cost(p, predictor, ref, segLengths, ...
     % Force both reference and prediction to be strict column vectors
     ref = ref(:);
     yhat = yhat(:);
+        
+    % 4 & 5. Calculate Tracking and Move-Suppression Terms safely
+    if length(p) == 1
+        uPrev = uKm1;
+    else
+        uPrev = [uKm1; p(1:end-1)];
+    end
     
-    % 4 & 5. Calculate Tracking and Move-Suppression Terms
-    uPrev = [uKm1; p(1:end-1)];
+    % Ensure uPrev matches p's shape exactly
+    uPrev = uPrev(:);
+
+    %fprintf("ref   : %dx%d\n", size(ref));
+    %fprintf("yhat  : %dx%d\n", size(yhat));
+    %fprintf("p     : %dx%d\n", size(p));
+    %fprintf("uPrev : %dx%d\n", size(uPrev));
     
     % 6. Total Cost (forced to scalar via 'all' sum)
     J = sum((ref - yhat).^2, 'all') + lamDu * sum((p - uPrev).^2, 'all');

@@ -28,7 +28,7 @@ y_vec = []
 %%
 pendulum_process_obf([], 0); 
 disp('Začetek simulacije...');
-y_vec_2 = [pendulum_process_obf(u_vec, Ts)];
+y_vec_2 = [pendulum_process_obf(u_vec*0, Ts)];
 disp('Simulacija končana.');
 y_vec = [y_vec;y_vec_2]
 
