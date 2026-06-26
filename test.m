@@ -1,0 +1,59 @@
+clear
+close all
+clc
+
+% getting all the data needed for refY
+Ts = 0.05;              % Čas vzorčenja (s)
+T_sim = 10;             % Skupni čas simulacije (s)
+N = ceil(T_sim / Ts);   % Število korakov
+t_vec = (0:N-1)' * Ts;  % Časovni vektor
+TimeOfPeriod = 1.5;     % Period of alternation (seconds)
+uBaseValue = 1.5;       % Baseline value
+amplitude = 0.5;        % How much it steps up/down from baseline
+
+u_vec = zeros(N,1);
+numSteps = ceil(t_vec(end) / TimeOfPeriod);
+for k = 1:numSteps
+    idx = (t_vec >= (k-1)*TimeOfPeriod) & (t_vec < k*TimeOfPeriod);
+    stepNoise = (2*rand - 1) * amplitude;
+    u_vec(idx) = uBaseValue + stepNoise;
+end
+
+pendulum_process_obf([], 0); 
+
+%%
+
+y_vec = []
+
+%%
+pendulum_process_obf([], 0); 
+disp('Začetek simulacije...');
+y_vec_2 = [pendulum_process_obf(u_vec, Ts)];
+disp('Simulacija končana.');
+y_vec = [y_vec;y_vec_2]
+
+
+
+size(y_vec)
+
+%% --- Grafični prikaz (Plotting) ---
+figure('Name', 'Simulacija nihala', 'Color', [1 1 1]);
+
+% Zgornji graf: Vhodni signal (u)
+subplot(2, 1, 1);
+plot(t_vec, u_vec, 'b-', 'LineWidth', 1.5);
+grid on;
+title('Vhodni signal (u)');
+xlabel('Čas [s]');
+ylabel('Vrednost');
+
+% Spodnji graf: Odziv sistema (y)
+subplot(2, 1, 2);
+plot(t_vec, y_vec(:,1), 'r-', 'LineWidth', 1.5);
+grid on;
+title('Odziv sistema / Izhod (y)');
+xlabel('Čas [s]');
+ylabel('Odziv');
+
+% Izboljšava razmaka med grafi
+sgtitle('Rezultati simulacije nihala');

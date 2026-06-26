@@ -1,0 +1,186 @@
+
+%
+
+
+u= [0;2]
+y = [0;30]
+fuzziness =2;
+
+theta_local = [
+    0.0170,  0.0474,  1.4574, -0.5858, -0.0114;
+    0.0210,  0.0351,  1.5835, -0.6966, -0.0091;
+    0.0191,  0.0413,  1.5204, -0.6401, -0.0109;
+    0.0204,  0.0361,  1.5810, -0.6942, -0.0094;
+    0.0195,  0.0391,  1.5469, -0.6643, -0.0100
+];
+
+centersXY = [
+    1.7906,  0.8020;
+    0.1918,  0.1834;
+    2.3567,  1.2609;
+    0.8929,  0.3604;
+    2.7668,  1.7451
+];
+
+joint_inputs_for_weights = [u,y]
+
+function normalized_mu = NormaliationOfMu(mu)
+    sumMu = sum(mu,1);
+    normalized_mu = mu ./sumMu;
+
+end
+
+
+%% Return the uSeq required to do forcasting
+function uSeq = expand_segments(p, segLengths) %#ok<DEFNU>
+
+% EXPAND_SEGMENTS   Turn p into the full length-H input sequence.
+%
+%   p           : column vector of S decisions
+%   segLengths  : vector of S positive ints summing to H
+%   uSeq        : column vector of length H with uSeq(j) = p(s) for
+%                 every sample j that falls inside segment s.
+%
+%   Example:  expand_segments([0.3; -0.2], [3 3])
+%             returns [0.3; 0.3; 0.3; -0.2; -0.2; -0.2].
+%
+% Hint: allocate uSeq = zeros(H, 1), then fill block by block with a
+    uSeq = [];
+    for lenIndex = 1:length(segLengths)
+        uSegment = ones(segLengths(lenIndex),1) * p(lenIndex);
+        uSeq = [uSeq; uSegment];
+    end
+
+end
+
+%% makes the prediction for H samples
+function yhat = simulate_horizon_mpc(uSeq, yKm1, yKm2, uKm1, centersXY, theta_local, fuzziness, numRules)
+    H = length(uSeq);
+    yhat = zeros(H,1);
+    
+    for h_idx = 1:H
+        % --- Current Candidate Inputs ---
+        u1 = uSeq(h_idx);
+        if h_idx == 1
+            u2 = uKm1;
+        else
+            u2 = uSeq(h_idx-1);
+        end
+        
+        % --- Current Predicted/Past Outputs ---
+        if h_idx == 1
+            yp1 = yKm1;
+            yp2 = yKm2;
+        elseif h_idx == 2
+            yp1 = yhat(h_idx-1);
+            yp2 = yKm1;
+        else
+            yp1 = yhat(h_idx-1);
+            yp2 = yhat(h_idx-2);
+        end
+        
+        % --- CRITICAL: Calculate weights dynamically INSIDE the loop ---
+        % The operating point uses the current candidate input u1 and past output yp1
+        current_operating_point = [u1, yp1]; 
+        
+        % Compute distance to fuzzy centers
+        distances_k = pdist2(centersXY, current_operating_point);
+        mu_k = 1 ./ (distances_k.^fuzziness + 1e-6);
+        w_k = mu_k / sum(mu_k); % Size: numRules x 1
+        
+        % --- Build Regressor (matches your script: [u(k), u(k-1), y(k-1), y(k-2), 1]) ---
+        Xe_k = [u1, u2, yp1, yp2, 1]; 
+        
+        % --- Blend local models ---
+        yk_pred = 0;
+        for i = 1:numRules
+            y_local_rule = Xe_k * theta_local(i, :).';
+            yk_pred = yk_pred + w_k(i) * y_local_rule;
+        end
+        
+        % Save prediction for the next horizon steps
+        yhat(h_idx) = yk_pred;
+    end
+end
+
+%%
+
+function J = mpc_cost(p, predictor, ref, segLengths, ...
+                      yKm1, yKm2, uKm1, state, lamDu) %#ok<DEFNU,INUSD>
+% MPC_COST   Receding-horizon cost.
+%
+%   J = sum_j (r(j) - yhat(j))^2 ...
+%     + lamDu * sum_s (p(s) - p(s-1))^2,    with p(0) := uKm1.
+
+    %%%%%%%%%%%%%%%%%%%%  YOUR CODE STARTS HERE  %%%%%%%%%%%%%%%%%%%%
+    % 1. Force column vector
+    p = p(:);
+    
+    % 2 & 3. Expand segments and predict outputs over horizon
+    uSeq = expand_segments(p, segLengths);
+    yhat = predictor(uSeq, yKm1, yKm2, uKm1, state);
+    
+    % 4 & 5. Calculate Tracking and Move-Suppression Terms
+    uPrev = [uKm1; p(1:end-1)];
+    
+    % 6. Total Cost
+    J = sum((ref - yhat).^2) + lamDu * sum((p - uPrev).^2);
+    %%%%%%%%%%%%%%%%%%%%%  YOUR CODE ENDS HERE  %%%%%%%%%%%%%%%%%%%%%
+end
+
+function pOpt = solve_mpc_step(predictor, ref, segLengths, ...
+                               yKm1, yKm2, uKm1, state, pWarm, cfg, ...
+                               uMin, uMax) %#ok<DEFNU,INUSD>
+% SOLVE_MPC_STEP   One MPC sub-problem. Return p* clipped to bounds.
+%
+% The bounds (uMin, uMax) are actuator saturation limits and come
+% from the PLANT, not from the controller config.
+%
+% Branch 1 -- S == 1:
+%     pOpt = fminbnd(@(u) mpc_cost(u, ...), uMin, uMax);
+%   (more robust at the box bounds than fmincon)
+%
+% Branch 2 -- S >= 2:
+%     opts = optimoptions('fmincon', 'Display','off', ...
+%                         'Algorithm','sqp', 'MaxIterations', 40);
+%     pOpt = fmincon(@(p) mpc_cost(p, ...), pWarm, ...
+%                    [], [], [], [], ...
+%                    uMin*ones(S,1), uMax*ones(S,1), ...
+%                    [], opts);
+%
+% After either branch, clip:  pOpt = min(max(pOpt, uMin), uMax);
+% and return a column vector.
+    %%%%%%%%%%%%%%%%%%%%  YOUR CODE STARTS HERE  %%%%%%%%%%%%%%%%%%%%
+    
+    % 1. Determine the length of the horizon window (S) from the warm start vector
+    S = length(pWarm);
+    
+    % 2. Define the anonymous objective function handle
+    % This forwards all required background variables to your external mpc_cost function
+    % Inside solve_mpc_step, change this line:
+    costFun = @(p) mpc_cost(p, predictor, ref, segLengths, yKm1, yKm2, uKm1, state, cfg.lamDu);
+    
+    % 3. Branch optimization logic based on horizon length
+    if S == 1
+        % For a 1-step horizon, use bounded scalar optimization
+        % Note: fminbnd expects upper and lower bounds as scalar values
+        pOpt = fminbnd(costFun, uMin, uMax);
+    else
+        % For multi-step horizons, use Sequential Quadratic Programming (SQP) via fmincon
+        opts = optimoptions('fmincon', 'Display', 'off', ...
+                            'Algorithm', 'sqp', 'MaxIterations', 40);
+                        
+        % Vectorize the lower and upper bounds to match the dimension of S
+        lb = uMin * ones(S, 1);
+        ub = uMax * ones(S, 1);
+        
+        % Run the constrained optimizer
+        pOpt = fmincon(costFun, pWarm, [], [], [], [], lb, ub, [], opts);
+    end
+    
+    % 4. Hard safety clip to plant limits and enforce a column vector shape
+    pOpt = min(max(pOpt, uMin), uMax);
+    pOpt = pOpt(:); 
+
+    %%%%%%%%%%%%%%%%%%%%%  YOUR CODE ENDS HERE  %%%%%%%%%%%%%%%%%%%%%
+end
