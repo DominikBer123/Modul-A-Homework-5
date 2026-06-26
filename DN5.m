@@ -2,28 +2,9 @@ clear
 close all
 clc
 
-% reset System
+%% reset System
 
 pendulum_process_obf([], 0); 
-
-
-Ts = 0.05;              % Čas vzorčenja (s)
-T_sim = 10;             % Skupni čas simulacije (s)
-N = ceil(T_sim / Ts);   % Število korakov
-t_vec = (0:N-1)' * Ts;  % Časovni vektor
-
-% Sine wave parameters for bounds [8, 20]
-bias = 50; 
-amplitude = 30; 
-f = 1;                  % Frequency in Hz (adjust as needed)
-
-% Generate the sine wave
-refYDeg = bias + amplitude * sin(2 * pi * f * t_vec);
-
-
-
-figure
-plot(t_vec,refYDeg)
 
 
 %% Random Staircase Reference
@@ -33,6 +14,32 @@ T_sim = 100;
 N = ceil(T_sim/Ts);
 t_vec = (0:N-1)'*Ts;
 
+
+
+TimeOfPeriod = 1.5;       % Period of alternation (seconds)
+uBaseValue = 1.5;         % Baseline value
+amplitude = 0.5;        % How much it steps up/down from baseline
+
+u_vec = zeros(N,1);
+numSteps = ceil(t_vec(end) / TimeOfPeriod);
+
+for k = 1:numSteps
+
+    idx = (t_vec >= (k-1)*TimeOfPeriod) & (t_vec < k*TimeOfPeriod);
+
+    stepNoise = (2*rand - 1) * amplitude;
+
+    u_vec(idx) = uBaseValue + stepNoise;
+
+end
+
+
+disp('Začetek simulacije...');
+y_vec = pendulum_process_obf(u_vec, Ts);
+disp('Simulacija končana.');
+refY = y_vec(:,1);
+
+
 % Limits (degrees)
 minAngle = 30;
 maxAngle = 60;
@@ -41,45 +48,17 @@ maxAngle = 60;
 minHold = 1.0;
 maxHold = 3.0;
 
-refYDeg = zeros(N,1);
-
-k = 1;
-while k <= N
-
-    % Random angle
-    level = minAngle + (maxAngle-minAngle)*rand();
-
-    % Random duration
-    holdTime = minHold + (maxHold-minHold)*rand();
-    holdSamples = round(holdTime/Ts);
-
-    idx = k:min(k+holdSamples-1,N);
-    refYDeg(idx) = level;
-
-    k = idx(end)+1;
-end
-
-% Convert to radians
-refY = deg2rad(refYDeg);
 
 % Plot
 figure
-stairs(t_vec,refYDeg,'LineWidth',1.5)
+stairs(t_vec,refY,'LineWidth',1.5)
 grid on
 xlabel('Time [s]')
 ylabel('Reference [deg]')
-title('Random Staircase Reference')
-
-
-
-
-
-refY = deg2rad(refYDeg);
-
-
+title('input signal')
 
 %% začetek lab vaje 5
-fuzziness =2;
+fuzziness = 2;
 
 theta_local = [
     0.0170,  0.0474,  1.4574, -0.5858, -0.0114;
@@ -108,8 +87,8 @@ state.numRules    = 5;   % your number of clusters/rules
 
 % 2. MPC Horizon Configurations
 
-S = 1;                        % Control Horizon (1 decision parameter)
-segLengths = 8;               % A single segment of length 6 (sums to H)
+S = 3;                        % Control Horizon (1 decision parameter)
+segLengths = [8 8 8];               % A single segment of length 6 (sums to H)
 H = sum(segLengths);
 cfg.lamDu = 0.5;
 
@@ -122,10 +101,10 @@ u_cl = zeros(N, 1);         % Closed-loop control history
 y_cl = zeros(N, 1);         % Closed-loop system output history
 
 % Initialize the system with the first couple of true measurements to kickstart NARX lag
-y_cl(1) = 0.9100;
-y_cl(2) = 0.7700;
-u_cl(1) = 0;
-u_cl(2) = 0;
+y_cl(1) = refY(1);
+y_cl(2) = refY(2);
+u_cl(1) = u_vec(1);
+u_cl(2) = u_vec(2);
 
 % Warm-start initialization for the optimizer vector p (size S x 1)
 pWarm = zeros(S, 1);
@@ -185,17 +164,20 @@ grid on;
 xlabel('Time [s]')
 ylabel('Angle [deg]')
 title('Reference Tracking')
-legend('Reference','Pendulum Output','Location','best')
+legend('True Output - Reference','MPC Output','Location','best')
 
 %----------------------------------------------------------
 % Control Input
 %----------------------------------------------------------
 subplot(3,1,2)
-stairs(t_vec,u_cl,'k','LineWidth',1.5)
+plot(t_vec,u_vec,'r--','LineWidth',1.5); hold on;
+plot(t_vec,u_cl,'b','LineWidth',1.5); 
+
 grid on
 xlabel('Time [s]')
 ylabel('Control Input')
 title('MPC Control Signal')
+legend('True Input','MPC Input','Location','best')
 
 %----------------------------------------------------------
 % Tracking Error
@@ -206,24 +188,18 @@ grid on
 xlabel('Time [s]')
 ylabel('Error [deg]')
 title('Tracking Error')
-%% 5. Plot the tracking performance
-figure;
-subplot(2,1,1);
-plot(t_vec, refY, 'r--', 'LineWidth', 1.5); hold on;
-plot(t_vec, y_cl, 'b-', 'LineWidth', 1.5);
-grid on;
-legend('Reference (refY)', 'System Output (y\_cl)');
-title('Nonlinear MPC Setpoint Tracking Performance');
-ylabel('Output (y)');
-
-subplot(2,1,2);
-plot(t_vec, u_cl, 'k-', 'LineWidth', 1.5);
-grid on;
-legend('Control Action (u\_cl)');
-xlabel('Time (s)');
-ylabel('Input (u)');
 
 
+
+% 1. Calculate the RMSE values
+RMSE_y = sqrt(mean((y_cl - refY).^2));
+RMSE_u = sqrt(mean((u_cl - u_vec).^2)); % Assuming u_vec is the reference for u
+
+% 2. Print the results to the Command Window
+fprintf('--- Simulation Evaluation Results ---\n');
+fprintf('Output Tracking RMSE (y_cl vs refY): %.4f\n', RMSE_y);
+fprintf('Control Input RMSE   (u_cl vs u_vec): %.4f\n', RMSE_u);
+fprintf('-------------------------------------\n');
 %% Return the uSeq required to do forcasting
 function uSeq = expand_segments(p, segLengths) %#ok<DEFNU>
 % EXPAND_SEGMENTS   Turn p into the full length-H input sequence.

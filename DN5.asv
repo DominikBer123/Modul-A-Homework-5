@@ -2,40 +2,47 @@ clear
 close all
 clc
 
-% reset System
+%% reset System
 
 pendulum_process_obf([], 0); 
-
-
-Ts = 0.05;              % Čas vzorčenja (s)
-T_sim = 10;             % Skupni čas simulacije (s)
-N = ceil(T_sim / Ts);   % Število korakov
-t_vec = (0:N-1)' * Ts;  % Časovni vektor
-
-% Sine wave parameters for bounds [8, 20]
-bias = 50; 
-amplitude = 30; 
-f = 1;                  % Frequency in Hz (adjust as needed)
-
-% Generate the sine wave
-refYDeg = bias + amplitude * sin(2 * pi * f * t_vec);
-
-
-
-figure
-plot(t_vec,refYDeg)
 
 
 %% Random Staircase Reference
 
 Ts = 0.05;
-T_sim = 10;
+T_sim = 100;
 N = ceil(T_sim/Ts);
 t_vec = (0:N-1)'*Ts;
 
+
+
+TimeOfPeriod = 1.5;       % Period of alternation (seconds)
+uBaseValue = 1.5;         % Baseline value
+amplitude = 0.5;        % How much it steps up/down from baseline
+
+u_vec = zeros(N,1);
+numSteps = ceil(t_vec(end) / TimeOfPeriod);
+
+for k = 1:numSteps
+
+    idx = (t_vec >= (k-1)*TimeOfPeriod) & (t_vec < k*TimeOfPeriod);
+
+    stepNoise = (2*rand - 1) * amplitude;
+
+    u_vec(idx) = uBaseValue + stepNoise;
+
+end
+
+
+disp('Začetek simulacije...');
+y_vec = pendulum_process_obf(u_vec, Ts);
+disp('Simulacija končana.');
+refY = y_vec(:,);
+
+
 % Limits (degrees)
-minAngle = 20;
-maxAngle = 80;
+minAngle = 30;
+maxAngle = 60;
 
 % Step duration limits (seconds)
 minHold = 1.0;
@@ -62,6 +69,10 @@ end
 % Convert to radians
 refY = deg2rad(refYDeg);
 
+
+
+
+
 % Plot
 figure
 stairs(t_vec,refYDeg,'LineWidth',1.5)
@@ -70,16 +81,8 @@ xlabel('Time [s]')
 ylabel('Reference [deg]')
 title('Random Staircase Reference')
 
-
-
-
-
-refY = deg2rad(refYDeg);
-
-
-
 %% začetek lab vaje 5
-fuzziness =2;
+fuzziness = 2;
 
 theta_local = [
     0.0170,  0.0474,  1.4574, -0.5858, -0.0114;
@@ -206,22 +209,6 @@ grid on
 xlabel('Time [s]')
 ylabel('Error [deg]')
 title('Tracking Error')
-%% 5. Plot the tracking performance
-figure;
-subplot(2,1,1);
-plot(t_vec, refY, 'r--', 'LineWidth', 1.5); hold on;
-plot(t_vec, y_cl, 'b-', 'LineWidth', 1.5);
-grid on;
-legend('Reference (refY)', 'System Output (y\_cl)');
-title('Nonlinear MPC Setpoint Tracking Performance');
-ylabel('Output (y)');
-
-subplot(2,1,2);
-plot(t_vec, u_cl, 'k-', 'LineWidth', 1.5);
-grid on;
-legend('Control Action (u\_cl)');
-xlabel('Time (s)');
-ylabel('Input (u)');
 
 
 %% Return the uSeq required to do forcasting
