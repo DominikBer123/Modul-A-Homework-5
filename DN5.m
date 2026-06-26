@@ -303,8 +303,6 @@ end
 function pOpt = solve_mpc_step(predictor, ref, segLengths, ...
                                yKm1, yKm2, uKm1, state, pWarm, cfg, ...
                                uMin, uMax) %#ok<DEFNU,INUSD>
-% SOLVE_MPC_STEP   One MPC sub-problem. Return p* clipped to bounds.
-    %%%%%%%%%%%%%%%%%%%%  YOUR CODE STARTS HERE  %%%%%%%%%%%%%%%%%%%%
     
     % 1. Determine the length of the horizon window (S) from the warm start vector
     S = length(pWarm);
@@ -332,5 +330,4 @@ function pOpt = solve_mpc_step(predictor, ref, segLengths, ...
     % 4. Hard safety clip to plant limits and enforce a column vector shape
     pOpt = min(max(pOpt, uMin), uMax);
     pOpt = pOpt(:); 
-    %%%%%%%%%%%%%%%%%%%%%  YOUR CODE ENDS HERE  %%%%%%%%%%%%%%%%%%%%%
 end
