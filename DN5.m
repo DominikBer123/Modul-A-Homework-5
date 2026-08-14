@@ -14,24 +14,40 @@ T_sim = 100;
 N = ceil(T_sim/Ts);
 t_vec = (0:N-1)'*Ts;
 
-
-
-TimeOfPeriod = 1.5;       % Period of alternation (seconds)
-uBaseValue = 1.5;         % Baseline value
+TimeOfPeriod = 2;       % Period of alternation (seconds)
+uBaseValue = 1.5;       % Baseline value
 amplitude = 0.5;        % How much it steps up/down from baseline
 
 u_vec = zeros(N,1);
 numSteps = ceil(t_vec(end) / TimeOfPeriod);
 
 for k = 1:numSteps
-
     idx = (t_vec >= (k-1)*TimeOfPeriod) & (t_vec < k*TimeOfPeriod);
-
     stepNoise = (2*rand - 1) * amplitude;
-
     u_vec(idx) = uBaseValue + stepNoise;
-
 end
+
+% --- ADD SINE WAVE AT THE END HERE ---
+T_sine = 40;            % Duration of the sine wave section in seconds
+N_sine = ceil(T_sine/Ts);
+
+% Create the extended time vector starting right after the random steps
+t_sine = t_vec(end) + Ts + (0:N_sine-1)'*Ts; 
+
+% Sine wave: Amplitude 1, Freq 0.8 Hz, centered around 1
+f_sine = 0.2;
+u_sine = 1.5 + 0.7 * sin(2 * pi * f_sine * t_sine);
+
+% Append both vectors together
+t_vec = [t_vec; t_sine];
+u_vec = [u_vec; u_sine];
+
+% Optional: Plot to see the result
+plot(t_vec, u_vec);
+grid on;
+xlabel('Time (s)');
+ylabel('u');
+title('Random Steps followed by 0.8 Hz Sine Wave');
 
 
 disp('Začetek simulacije...');
@@ -49,13 +65,13 @@ minHold = 1.0;
 maxHold = 3.0;
 
 
-% Plot
+%% Plot
 figure
-stairs(t_vec,refY,'LineWidth',1.5)
+stairs(t_vec,rad2deg(refY),'LineWidth',1.5)
 grid on
 xlabel('Time [s]')
 ylabel('Reference [deg]')
-title('input signal')
+title('Ref signal r()')
 
 %% začetek lab vaje 5
 fuzziness = 2;
@@ -88,7 +104,7 @@ state.numRules    = 5;   % your number of clusters/rules
 % 2. MPC Horizon Configurations
 
 S = 3;                        % Control Horizon (1 decision parameter)
-segLengths = [8 8 8];               % A single segment of length 6 (sums to H)
+segLengths = [20,20,20];               % A single segment of length 6 (sums to H)
 H = sum(segLengths);
 cfg.lamDu = 0.5;
 
@@ -111,6 +127,7 @@ pWarm = zeros(S, 1);
 
 disp('Starting MPC Closed-Loop Simulation...');
 
+N = size(t_vec,1)
 % 4. Simulation Loop (Receding Horizon)
 for k = 3:N
     % Define the target reference window for the current horizon H
@@ -144,7 +161,7 @@ for k = 3:N
     y_cl(k) = y_new(1,1); % Extract the current true system state
     
     % Simple progress tracker
-    if mod(k, 200) == 0
+    if mod(k, N/10) == 0
         fprintf('Progress: %.1f%%\n', (k/N)*100);
     end
 end
@@ -157,7 +174,7 @@ figure('Name','MPC Closed Loop Results','NumberTitle','off');
 %----------------------------------------------------------
 % Output Tracking
 %----------------------------------------------------------
-subplot(3,1,1)
+subplot(2,1,1)
 plot(t_vec, rad2deg(refY),'r--','LineWidth',1.5); hold on;
 plot(t_vec, rad2deg(y_cl),'b','LineWidth',1.5);
 grid on;
@@ -169,7 +186,7 @@ legend('True Output - Reference','MPC Output','Location','best')
 %----------------------------------------------------------
 % Control Input
 %----------------------------------------------------------
-subplot(3,1,2)
+subplot(2,1,2)
 plot(t_vec,u_vec,'r--','LineWidth',1.5); hold on;
 plot(t_vec,u_cl,'b','LineWidth',1.5); 
 
@@ -179,26 +196,22 @@ ylabel('Control Input')
 title('MPC Control Signal')
 legend('True Input','MPC Input','Location','best')
 
-%----------------------------------------------------------
-% Tracking Error
-%----------------------------------------------------------
-subplot(3,1,3)
-plot(t_vec,rad2deg(refY - y_cl),'m','LineWidth',1.5)
-grid on
-xlabel('Time [s]')
-ylabel('Error [deg]')
-title('Tracking Error')
 
 
+%%
 
 % 1. Calculate the RMSE values
-RMSE_y = sqrt(mean((y_cl - refY).^2));
+RMSE_y = sqrt(mean((rad2deg(y_cl) - rad2deg(refY)).^2));
 RMSE_u = sqrt(mean((u_cl - u_vec).^2)); % Assuming u_vec is the reference for u
+MSE_y_rad = mean((rad2deg(y_cl) - rad2deg(refY)).^2);
 
 % 2. Print the results to the Command Window
 fprintf('--- Simulation Evaluation Results ---\n');
 fprintf('Output Tracking RMSE (y_cl vs refY): %.4f\n', RMSE_y);
 fprintf('Control Input RMSE   (u_cl vs u_vec): %.4f\n', RMSE_u);
+fprintf('Output Tracking MSE (y_cl vs refY): %.4f\n', MSE_y_rad);
+
+
 fprintf('-------------------------------------\n');
 %% Return the uSeq required to do forcasting
 function uSeq = expand_segments(p, segLengths) %#ok<DEFNU>
